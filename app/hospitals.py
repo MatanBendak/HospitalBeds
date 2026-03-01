@@ -1,5 +1,6 @@
 from __future__ import annotations
 from typing import Any
+import json
 import streamlit as st
 from database import get_connection
 
@@ -112,73 +113,92 @@ def delete_hospital(hospital_id: int) -> None:
     get_attribute_options.clear()
 
 
-def update_hospital_attribute(hospital_id: int, attribute_id: int, value: Any) -> None:
-    """Update a single attribute value and auto-recalculate % Beds in Shelter."""
+def save_hospital_values(hospital_id: int, values: dict) -> None:
+    """Upsert multiple attribute values at once, then recalculate all formula attributes."""
     conn = get_connection()
     cur = conn.cursor()
-    cur.execute(
-        """
-        INSERT INTO hospital_attributes (hospital_id, attribute_id, value)
-        VALUES (%s, %s, %s)
-        ON CONFLICT (hospital_id, attribute_id) DO UPDATE SET value = EXCLUDED.value
-        """,
-        (hospital_id, attribute_id, str(value) if value is not None else ""),
-    )
-    conn.commit()
-
-    # Determine if the changed attribute is one of the two bed fields
-    cur.execute("SELECT name FROM attributes WHERE id = %s", (attribute_id,))
-    attr = cur.fetchone()
-
-    if attr and attr["name"] in ("Total Beds", "Beds in Shelter"):
-        _recalculate_percentage(conn, hospital_id)
-        conn.commit()
-
-    cur.close()
-    conn.close()
-    get_hospital_values.clear()
-    get_all_hospital_values.clear()
-    get_attribute_options.clear()
-
-
-# ---------------------------------------------------------------------------
-# Internal calculation
-# ---------------------------------------------------------------------------
-
-def _recalculate_percentage(conn: Any, hospital_id: int) -> None:
-    """Compute (Beds in Shelter / Total Beds * 100) and persist it."""
-    cur = conn.cursor()
-    cur.execute(
-        """
-        SELECT a.name, ha.value
-        FROM hospital_attributes ha
-        JOIN attributes a ON a.id = ha.attribute_id
-        WHERE ha.hospital_id = %s
-          AND a.name IN ('Total Beds', 'Beds in Shelter', '% Beds in Shelter')
-        """,
-        (hospital_id,),
-    )
-    rows = cur.fetchall()
-
-    data = {r["name"]: r["value"] for r in rows}
-
-    try:
-        total = float(data.get("Total Beds") or 0)
-        shelter = float(data.get("Beds in Shelter") or 0)
-        pct = round((shelter / total * 100), 2) if total > 0 else 0.0
-    except (ValueError, ZeroDivisionError):
-        pct = 0.0
-
-    cur.execute("SELECT id FROM attributes WHERE name = '% Beds in Shelter'")
-    pct_attr = cur.fetchone()
-
-    if pct_attr:
+    for attribute_id, value in values.items():
         cur.execute(
             """
             INSERT INTO hospital_attributes (hospital_id, attribute_id, value)
             VALUES (%s, %s, %s)
             ON CONFLICT (hospital_id, attribute_id) DO UPDATE SET value = EXCLUDED.value
             """,
-            (hospital_id, pct_attr["id"], str(pct)),
+            (hospital_id, attribute_id, str(value) if value is not None else ""),
         )
+    conn.commit()
+    cur.close()
+    _recalculate_formulas(conn, hospital_id)
+    conn.commit()
+    conn.close()
+    get_hospital_values.clear()
+    get_all_hospital_values.clear()
+    get_attribute_options.clear()
+
+
+def update_hospital_attribute(hospital_id: int, attribute_id: int, value: Any) -> None:
+    """Update a single attribute value and recalculate all formula attributes."""
+    save_hospital_values(hospital_id, {attribute_id: value})
+
+
+# ---------------------------------------------------------------------------
+# Internal calculation
+# ---------------------------------------------------------------------------
+
+def _recalculate_formulas(conn: Any, hospital_id: int) -> None:
+    """Recalculate all percentage and calculated attributes for a hospital."""
+    cur = conn.cursor()
+
+    # Get all formula-based attributes
+    cur.execute("""
+        SELECT id, data_type, formula
+        FROM attributes
+        WHERE data_type IN ('percentage', 'calculated')
+          AND formula IS NOT NULL AND formula != ''
+    """)
+    formula_attrs = cur.fetchall()
+
+    if not formula_attrs:
+        cur.close()
+        return
+
+    # Current values for this hospital
+    cur.execute(
+        "SELECT attribute_id, value FROM hospital_attributes WHERE hospital_id = %s",
+        (hospital_id,),
+    )
+    values = {r["attribute_id"]: r["value"] for r in cur.fetchall()}
+
+    for attr in formula_attrs:
+        try:
+            formula = json.loads(attr["formula"])
+            a_val = float(values.get(formula["a_id"]) or 0)
+            b_val = float(values.get(formula["b_id"]) or 0)
+
+            if attr["data_type"] == "percentage":
+                result = round(a_val / b_val * 100, 2) if b_val != 0 else 0.0
+            else:  # calculated
+                op = formula.get("op", "+")
+                if op == "+":
+                    result = a_val + b_val
+                elif op == "-":
+                    result = a_val - b_val
+                elif op == "*":
+                    result = round(a_val * b_val, 4)
+                elif op == "/":
+                    result = round(a_val / b_val, 4) if b_val != 0 else 0.0
+                else:
+                    result = 0.0
+        except Exception:
+            result = 0.0
+
+        cur.execute(
+            """
+            INSERT INTO hospital_attributes (hospital_id, attribute_id, value)
+            VALUES (%s, %s, %s)
+            ON CONFLICT (hospital_id, attribute_id) DO UPDATE SET value = EXCLUDED.value
+            """,
+            (hospital_id, attr["id"], str(result)),
+        )
+
     cur.close()

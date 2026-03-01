@@ -45,7 +45,8 @@ def get_connection() -> _PooledConnection:
 
 
 def init_db() -> None:
-    """Create tables and seed default attributes if they don't exist."""
+    """Create tables and run all schema migrations."""
+    import json as _json
     conn = get_connection()
     cur = conn.cursor()
 
@@ -76,35 +77,22 @@ def init_db() -> None:
         )
     """)
 
-    # Migrate: ensure data_type constraint includes 'selection'
-    cur.execute(
-        """
-        SELECT conname FROM pg_constraint
+    # Migration: add formula column (idempotent)
+    cur.execute("ALTER TABLE attributes ADD COLUMN IF NOT EXISTS formula TEXT DEFAULT NULL")
+
+    # Migration: update data_type constraint to include all types
+    cur.execute("""
+        SELECT pg_get_constraintdef(oid) FROM pg_constraint
         WHERE conname = 'attributes_data_type_check'
           AND conrelid = 'attributes'::regclass
-        """
-    )
-    existing = cur.fetchone()
-    if existing:
-        # Check whether 'selection' is already in the constraint definition
-        cur.execute(
-            """
-            SELECT pg_get_constraintdef(oid) FROM pg_constraint
-            WHERE conname = 'attributes_data_type_check'
-              AND conrelid = 'attributes'::regclass
-            """
-        )
-        defn = cur.fetchone()
-        if defn and "selection" not in defn[0]:
-            cur.execute("ALTER TABLE attributes DROP CONSTRAINT attributes_data_type_check")
-            cur.execute(
-                "ALTER TABLE attributes ADD CONSTRAINT attributes_data_type_check "
-                "CHECK(data_type IN ('numeric', 'text', 'selection'))"
-            )
-    else:
+    """)
+    row = cur.fetchone()
+    constraint_def = row[0] if row else ""
+    if "percentage" not in constraint_def or "calculated" not in constraint_def:
+        cur.execute("ALTER TABLE attributes DROP CONSTRAINT IF EXISTS attributes_data_type_check")
         cur.execute(
             "ALTER TABLE attributes ADD CONSTRAINT attributes_data_type_check "
-            "CHECK(data_type IN ('numeric', 'text', 'selection'))"
+            "CHECK(data_type IN ('numeric', 'text', 'selection', 'percentage', 'calculated'))"
         )
 
     # Seed the three default attributes once
@@ -122,6 +110,24 @@ def init_db() -> None:
             """,
             (name, dtype, is_calc, is_def),
         )
+
+    # Migration: convert '% Beds in Shelter' to new percentage type with formula
+    cur.execute("""
+        SELECT id FROM attributes
+        WHERE name = '%% Beds in Shelter' AND (formula IS NULL OR formula = '')
+    """)
+    pct_row = cur.fetchone()
+    if pct_row:
+        cur.execute("SELECT id FROM attributes WHERE name = 'Total Beds'")
+        total_row = cur.fetchone()
+        cur.execute("SELECT id FROM attributes WHERE name = 'Beds in Shelter'")
+        shelter_row = cur.fetchone()
+        if total_row and shelter_row:
+            formula_json = _json.dumps({"a_id": shelter_row["id"], "b_id": total_row["id"]})
+            cur.execute(
+                "UPDATE attributes SET data_type = 'percentage', formula = %s, is_calculated = 1 WHERE id = %s",
+                (formula_json, pct_row["id"]),
+            )
 
     conn.commit()
     cur.close()

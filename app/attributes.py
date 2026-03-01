@@ -1,30 +1,50 @@
 from __future__ import annotations
+import json
 import streamlit as st
 from database import get_connection
+
+ALL_DATA_TYPES = ("numeric", "text", "selection", "percentage", "calculated")
 
 
 @st.cache_data(ttl=300)
 def get_all_attributes() -> list[dict]:
     conn = get_connection()
     cur = conn.cursor()
-    cur.execute("SELECT id, name, data_type, is_calculated, is_default FROM attributes ORDER BY id")
+    cur.execute(
+        "SELECT id, name, data_type, is_calculated, is_default, formula FROM attributes ORDER BY id"
+    )
     rows = cur.fetchall()
     cur.close()
     conn.close()
-    return [dict(r) for r in rows]
+    result = []
+    for r in rows:
+        d = dict(r)
+        if d.get("formula"):
+            try:
+                d["formula"] = json.loads(d["formula"])
+            except Exception:
+                d["formula"] = None
+        else:
+            d["formula"] = None
+        result.append(d)
+    return result
 
 
-def add_attribute(name: str, data_type: str) -> int:
+def add_attribute(name: str, data_type: str, formula: dict | None = None) -> int:
     """Create a new attribute and add empty rows for every existing hospital."""
     name = name.strip()
-    if data_type not in ("numeric", "text", "selection"):
-        raise ValueError("data_type must be 'numeric', 'text', or 'selection'")
+    if data_type not in ALL_DATA_TYPES:
+        raise ValueError(f"data_type must be one of {ALL_DATA_TYPES}")
+
+    formula_json = json.dumps(formula) if formula else None
+    is_calculated = 1 if data_type in ("percentage", "calculated") else 0
 
     conn = get_connection()
     cur = conn.cursor()
     cur.execute(
-        "INSERT INTO attributes (name, data_type, is_calculated, is_default) VALUES (%s, %s, 0, 0) RETURNING id",
-        (name, data_type),
+        "INSERT INTO attributes (name, data_type, is_calculated, is_default, formula) "
+        "VALUES (%s, %s, %s, 0, %s) RETURNING id",
+        (name, data_type, is_calculated, formula_json),
     )
     attribute_id = cur.fetchone()["id"]
 
