@@ -1,7 +1,9 @@
 from __future__ import annotations
+import streamlit as st
 from database import get_connection
 
 
+@st.cache_data(ttl=300)
 def get_all_attributes() -> list[dict]:
     conn = get_connection()
     cur = conn.cursor()
@@ -41,6 +43,7 @@ def add_attribute(name: str, data_type: str) -> int:
     conn.commit()
     cur.close()
     conn.close()
+    get_all_attributes.clear()
     return attribute_id
 
 
@@ -52,3 +55,4 @@ def delete_attribute(attribute_id: int) -> None:
     conn.commit()
     cur.close()
     conn.close()
+    get_all_attributes.clear()

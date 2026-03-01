@@ -13,6 +13,7 @@ import streamlit as st
 from database import init_db
 from hospitals import (
     get_all_hospitals,
+    get_all_hospital_values,
     get_hospital_values,
     add_hospital,
     delete_hospital,
@@ -26,8 +27,16 @@ from attributes import get_all_attributes, add_attribute, delete_attribute
 st.set_page_config(page_title="Hospital Resource Tracker", page_icon="🏥", layout="wide")
 st.title("🏥 Hospital Resource Tracker")
 
-try:
+
+@st.cache_resource
+def _init_db_once():
+    """Run DB bootstrap exactly once for the lifetime of the app process."""
     init_db()
+    return True
+
+
+try:
+    _init_db_once()
 except Exception as _db_err:
     st.error(
         "⚠️ Could not connect to the database.\n\n"
@@ -56,9 +65,10 @@ def build_summary_df() -> pd.DataFrame:
         return pd.DataFrame()
 
     col_names = [a["name"] for a in attributes]
+    all_values = get_all_hospital_values()  # single query for all hospitals
     rows = []
     for h in hospitals:
-        vals = get_hospital_values(h["id"])
+        vals = all_values.get(h["id"], {})
         row = {"Hospital": h["name"]}
         for a in attributes:
             raw = vals.get(a["id"], "")

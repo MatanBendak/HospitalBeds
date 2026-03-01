@@ -1,13 +1,47 @@
 import psycopg2
 import psycopg2.extras
+import psycopg2.pool
 import streamlit as st
 
 
-def get_connection():
-    """Open a new PostgreSQL connection using DATABASE_URL from Streamlit secrets."""
+class _PooledConnection:
+    """Thin wrapper so that conn.close() returns the connection to the pool."""
+
+    def __init__(self, pool: psycopg2.pool.ThreadedConnectionPool, conn):
+        self._pool = pool
+        self._conn = conn
+
+    def cursor(self):
+        return self._conn.cursor()
+
+    def commit(self):
+        self._conn.commit()
+
+    def rollback(self):
+        self._conn.rollback()
+
+    def close(self):
+        # Roll back any uncommitted state before returning to pool
+        try:
+            self._conn.rollback()
+        except Exception:
+            pass
+        self._pool.putconn(self._conn)
+
+
+@st.cache_resource
+def _get_pool() -> psycopg2.pool.ThreadedConnectionPool:
+    """Create (once) and cache a thread-safe connection pool for the app lifetime."""
     db_url = st.secrets["DATABASE_URL"]
-    conn = psycopg2.connect(db_url, cursor_factory=psycopg2.extras.RealDictCursor)
-    return conn
+    return psycopg2.pool.ThreadedConnectionPool(
+        1, 5, db_url, cursor_factory=psycopg2.extras.RealDictCursor
+    )
+
+
+def get_connection() -> _PooledConnection:
+    """Return a pooled connection. Call .close() when done to return it to the pool."""
+    pool = _get_pool()
+    return _PooledConnection(pool, pool.getconn())
 
 
 def init_db() -> None:

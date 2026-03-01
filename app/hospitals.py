@@ -1,5 +1,6 @@
 from __future__ import annotations
 from typing import Any
+import streamlit as st
 from database import get_connection
 
 
@@ -7,6 +8,7 @@ from database import get_connection
 # Read helpers
 # ---------------------------------------------------------------------------
 
+@st.cache_data(ttl=300)
 def get_all_hospitals() -> list[dict]:
     conn = get_connection()
     cur = conn.cursor()
@@ -17,6 +19,7 @@ def get_all_hospitals() -> list[dict]:
     return [dict(r) for r in rows]
 
 
+@st.cache_data(ttl=300)
 def get_hospital_values(hospital_id: int) -> dict[int, str]:
     """Return {attribute_id: value} for a given hospital."""
     conn = get_connection()
@@ -29,6 +32,21 @@ def get_hospital_values(hospital_id: int) -> dict[int, str]:
     cur.close()
     conn.close()
     return {r["attribute_id"]: r["value"] for r in rows}
+
+
+@st.cache_data(ttl=300)
+def get_all_hospital_values() -> dict[int, dict[int, str]]:
+    """Return {hospital_id: {attribute_id: value}} for all hospitals in one query."""
+    conn = get_connection()
+    cur = conn.cursor()
+    cur.execute("SELECT hospital_id, attribute_id, value FROM hospital_attributes")
+    rows = cur.fetchall()
+    cur.close()
+    conn.close()
+    result: dict[int, dict[int, str]] = {}
+    for r in rows:
+        result.setdefault(r["hospital_id"], {})[r["attribute_id"]] = r["value"]
+    return result
 
 
 # ---------------------------------------------------------------------------
@@ -57,6 +75,8 @@ def add_hospital(name: str) -> int:
     conn.commit()
     cur.close()
     conn.close()
+    get_all_hospitals.clear()
+    get_all_hospital_values.clear()
     return hospital_id
 
 
@@ -67,6 +87,9 @@ def delete_hospital(hospital_id: int) -> None:
     conn.commit()
     cur.close()
     conn.close()
+    get_all_hospitals.clear()
+    get_hospital_values.clear()
+    get_all_hospital_values.clear()
 
 
 def update_hospital_attribute(hospital_id: int, attribute_id: int, value: Any) -> None:
@@ -93,6 +116,8 @@ def update_hospital_attribute(hospital_id: int, attribute_id: int, value: Any) -
 
     cur.close()
     conn.close()
+    get_hospital_values.clear()
+    get_all_hospital_values.clear()
 
 
 # ---------------------------------------------------------------------------
