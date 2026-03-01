@@ -76,17 +76,36 @@ def init_db() -> None:
         )
     """)
 
-    # Migrate: broaden data_type constraint to include 'selection'
-    cur.execute("SAVEPOINT sp_constraint")
-    try:
-        cur.execute("ALTER TABLE attributes DROP CONSTRAINT IF EXISTS attributes_data_type_check")
+    # Migrate: ensure data_type constraint includes 'selection'
+    cur.execute(
+        """
+        SELECT conname FROM pg_constraint
+        WHERE conname = 'attributes_data_type_check'
+          AND conrelid = 'attributes'::regclass
+        """
+    )
+    existing = cur.fetchone()
+    if existing:
+        # Check whether 'selection' is already in the constraint definition
+        cur.execute(
+            """
+            SELECT pg_get_constraintdef(oid) FROM pg_constraint
+            WHERE conname = 'attributes_data_type_check'
+              AND conrelid = 'attributes'::regclass
+            """
+        )
+        defn = cur.fetchone()
+        if defn and "selection" not in defn[0]:
+            cur.execute("ALTER TABLE attributes DROP CONSTRAINT attributes_data_type_check")
+            cur.execute(
+                "ALTER TABLE attributes ADD CONSTRAINT attributes_data_type_check "
+                "CHECK(data_type IN ('numeric', 'text', 'selection'))"
+            )
+    else:
         cur.execute(
             "ALTER TABLE attributes ADD CONSTRAINT attributes_data_type_check "
             "CHECK(data_type IN ('numeric', 'text', 'selection'))"
         )
-        cur.execute("RELEASE SAVEPOINT sp_constraint")
-    except Exception:
-        cur.execute("ROLLBACK TO SAVEPOINT sp_constraint")
 
     # Seed the three default attributes once
     defaults = [
