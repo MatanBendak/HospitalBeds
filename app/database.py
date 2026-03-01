@@ -76,6 +76,18 @@ def init_db() -> None:
         )
     """)
 
+    # Migrate: broaden data_type constraint to include 'selection'
+    cur.execute("SAVEPOINT sp_constraint")
+    try:
+        cur.execute("ALTER TABLE attributes DROP CONSTRAINT IF EXISTS attributes_data_type_check")
+        cur.execute(
+            "ALTER TABLE attributes ADD CONSTRAINT attributes_data_type_check "
+            "CHECK(data_type IN ('numeric', 'text', 'selection'))"
+        )
+        cur.execute("RELEASE SAVEPOINT sp_constraint")
+    except Exception:
+        cur.execute("ROLLBACK TO SAVEPOINT sp_constraint")
+
     # Seed the three default attributes once
     defaults = [
         ("Total Beds",        "numeric", 0, 1),

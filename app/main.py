@@ -15,6 +15,7 @@ from hospitals import (
     get_all_hospitals,
     get_all_hospital_values,
     get_hospital_values,
+    get_attribute_options,
     add_hospital,
     delete_hospital,
     update_hospital_attribute,
@@ -193,6 +194,28 @@ elif page == "Hospital Details":
                         format="%.2f",
                         key=f"attr_{attr['id']}",
                     )
+                elif attr["data_type"] == "selection":
+                    existing_opts = get_attribute_options(attr["id"])
+                    current_val = raw or ""
+                    if current_val in existing_opts:
+                        sel_idx = existing_opts.index(current_val) + 1  # +1 for leading ""
+                        custom_default = ""
+                    else:
+                        sel_idx = 0
+                        custom_default = current_val
+                    selected = st.selectbox(
+                        label,
+                        options=[""] + existing_opts,
+                        index=sel_idx,
+                        key=f"sel_{attr['id']}",
+                    )
+                    custom_val = st.text_input(
+                        f"↳ Or type a new value for \"{label}\" (overrides selection above)",
+                        value=custom_default,
+                        placeholder="Leave blank to use selection above",
+                        key=f"sel_new_{attr['id']}",
+                    )
+                    new_vals[attr["id"]] = custom_val.strip() if custom_val.strip() else selected
                 else:
                     new_vals[attr["id"]] = st.text_input(
                         label,
@@ -220,7 +243,7 @@ elif page == "Manage Attributes":
     # Add attribute form
     with st.form("add_attr_form", clear_on_submit=True):
         attr_name = st.text_input("Attribute name")
-        attr_type = st.selectbox("Type", ["numeric", "text"])
+        attr_type = st.selectbox("Type", ["numeric", "text", "selection"])
         add_submitted = st.form_submit_button("Add Attribute")
         if add_submitted:
             if not attr_name.strip():
@@ -240,7 +263,7 @@ elif page == "Manage Attributes":
 
     for attr in attributes:
         col1, col2, col3 = st.columns([3, 1, 1])
-        badge = "🔢" if attr["data_type"] == "numeric" else "📝"
+        badge = "🔢" if attr["data_type"] == "numeric" else ("📋" if attr["data_type"] == "selection" else "📝")
         calc_tag = " *(auto-calculated)*" if attr["is_calculated"] else ""
         col1.markdown(f"{badge} **{attr['name']}**{calc_tag}")
         col2.write(attr["data_type"])

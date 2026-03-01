@@ -49,6 +49,25 @@ def get_all_hospital_values() -> dict[int, dict[int, str]]:
     return result
 
 
+@st.cache_data(ttl=300)
+def get_attribute_options(attribute_id: int) -> list[str]:
+    """Return sorted unique non-empty values stored for a selection-type attribute."""
+    conn = get_connection()
+    cur = conn.cursor()
+    cur.execute(
+        """
+        SELECT DISTINCT value FROM hospital_attributes
+        WHERE attribute_id = %s AND value IS NOT NULL AND value != ''
+        ORDER BY value
+        """,
+        (attribute_id,),
+    )
+    rows = cur.fetchall()
+    cur.close()
+    conn.close()
+    return [r["value"] for r in rows]
+
+
 # ---------------------------------------------------------------------------
 # Write helpers
 # ---------------------------------------------------------------------------
@@ -90,6 +109,7 @@ def delete_hospital(hospital_id: int) -> None:
     get_all_hospitals.clear()
     get_hospital_values.clear()
     get_all_hospital_values.clear()
+    get_attribute_options.clear()
 
 
 def update_hospital_attribute(hospital_id: int, attribute_id: int, value: Any) -> None:
@@ -118,6 +138,7 @@ def update_hospital_attribute(hospital_id: int, attribute_id: int, value: Any) -
     conn.close()
     get_hospital_values.clear()
     get_all_hospital_values.clear()
+    get_attribute_options.clear()
 
 
 # ---------------------------------------------------------------------------

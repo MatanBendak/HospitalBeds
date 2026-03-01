@@ -17,8 +17,8 @@ def get_all_attributes() -> list[dict]:
 def add_attribute(name: str, data_type: str) -> int:
     """Create a new attribute and add empty rows for every existing hospital."""
     name = name.strip()
-    if data_type not in ("numeric", "text"):
-        raise ValueError("data_type must be 'numeric' or 'text'")
+    if data_type not in ("numeric", "text", "selection"):
+        raise ValueError("data_type must be 'numeric', 'text', or 'selection'")
 
     conn = get_connection()
     cur = conn.cursor()
